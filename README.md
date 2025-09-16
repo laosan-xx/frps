@@ -3,7 +3,7 @@
 基于 [fatedier/frp](https://github.com/fatedier/frp) 原版 frp 内网穿透服务端 frps 的一键安装卸载脚本和 docker 镜像.支持 Linux 服务器和 docker 等多种环境安装部署.
 
 - GitHub [laosan-xx/frps](https://github.com/laosan-xx/frps)
-- Docker [laosan-xx/frps](https://hub.docker.com/r/laosan-xx/frps)
+- Docker [xxhy1989/frps](https://hub.docker.com/r/xxhy1989/frps)
 > *docker image support for X86 and ARM*
 
 ## 更新
@@ -91,7 +91,7 @@ vi /root/frps/frps.toml
 docker run -d --name=frps --restart=always \
     --network host \
     -v /root/frps/frps.toml:/frp/frps.toml  \
-    laosan-xx/frps
+    xxhy1989/frps
 ```
 > 以上命令 -v 挂载的目录是以 git clone 本仓库为例,也可以在任意位置手动创建 frps.toml 文件,并修改命令中的挂载路径.
 
@@ -106,7 +106,7 @@ docker restart frps
 ## 链接
 - Blog [www.ioiox.com](https://www.ioiox.com)
 - GitHub [laosan-xx/frps](https://github.com/laosan-xx/frps)
-- Docker Hub [laosan-xx/frps](https://hub.docker.com/r/laosan-xx/frps)
+- Docker Hub [xxhy1989/frps](https://hub.docker.com/r/xxhy1989/frps)
 - Docker [docker.ioiox.com](https://docker.ioiox.com)
 - 原版frp项目 [fatedier/frp](https://github.com/fatedier/frp)
 - [CentOS 7 安装配置frp内网穿透服务器端教程](https://www.ioiox.com/archives/5.html)
