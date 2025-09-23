@@ -1,7 +1,7 @@
 FROM alpine:3.8
 LABEL maintainer="Laosan <laosan@xxx.com>"
 
-ENV VERSION 0.64.0
+ENV VERSION 0.64.1
 ENV TZ=Asia/Shanghai
 WORKDIR /
 
