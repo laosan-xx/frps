@@ -14,7 +14,7 @@ Font="\033[0m"
 # variable
 WORK_PATH=$(dirname $(readlink -f $0))
 FRP_NAME=frps
-FRP_VERSION=0.70.25
+FRP_VERSION=0.70.26
 FRP_PATH=/usr/local/frp
 
 # 停止frpc
