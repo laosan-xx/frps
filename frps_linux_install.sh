@@ -12,7 +12,7 @@ Font="\033[0m"
 # fonts color
 
 # variable
-FRP_VERSION=0.80.1
+FRP_VERSION=0.80.2
 REPO=laosan-xx/frps
 WORK_PATH=$(dirname $(readlink -f $0))
 FRP_NAME=frps
