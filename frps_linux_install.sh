@@ -12,8 +12,12 @@ Font="\033[0m"
 # fonts color
 
 # variable
-FRP_VERSION=0.80.7
-REPO=laosan-xx/frps
+FRP_VERSION=${FRP_VERSION:-0.80.7}
+REPO=${REPO:-laosan-xx/frps}
+# frp 发布仓库（laosan-xx/frp 已设为私有，匿名下载会 404）
+FRP_RELEASE_REPO=${FRP_RELEASE_REPO:-laosan-xx/frp}
+# 有该私有仓库读权限的 GitHub PAT，未设置时按公开仓库处理
+FRP_PAT=${FRP_PAT:-}
 WORK_PATH=$(dirname $(readlink -f $0))
 FRP_NAME=frps
 FRP_PATH=/usr/local/frp
@@ -70,30 +74,147 @@ if [ $(uname -m) = "aarch64" ]; then
     PLATFORM=arm64
 fi
 
-FILE_NAME=frp_${FRP_VERSION}_linux_${PLATFORM}
-
-if [ ! -f "${WORK_PATH}/${FILE_NAME}.tar.gz" ]; then
-    if [ $GOOGLE_HTTP_CODE == "200" ]; then
-        wget -P ${WORK_PATH} https://github.com/laosan-xx/frp/releases/download/v${FRP_VERSION}/${FILE_NAME}.tar.gz -O ${FILE_NAME}.tar.gz
-        wget -P ${WORK_PATH} https://raw.githubusercontent.com/${REPO}/master/${FRP_NAME}.toml -O ${FRP_NAME}.toml
-    else
-        if [ $PROXY_HTTP_CODE == "200" ]; then
-            wget -P ${WORK_PATH} ${PROXY_URL}https://github.com/laosan-xx/frp/releases/download/v${FRP_VERSION}/${FILE_NAME}.tar.gz -O ${FILE_NAME}.tar.gz
-            wget -P ${WORK_PATH} ${PROXY_URL}https://raw.githubusercontent.com/${REPO}/master/${FRP_NAME}.toml -O ${FRP_NAME}.toml
-        else
-            echo -e "${Red}检测 GitHub Proxy 代理失效 开始使用官方地址下载${Font}"
-            wget -P ${WORK_PATH} https://github.com/laosan-xx/frp/releases/download/v${FRP_VERSION}/${FILE_NAME}.tar.gz -O ${FILE_NAME}.tar.gz
-            wget -P ${WORK_PATH} https://raw.githubusercontent.com/${REPO}/master/${FRP_NAME}.toml -O ${FRP_NAME}.toml
-        fi
-    fi
-else
-    echo -e "${Green}文件 ${FILE_NAME}.tar.gz 已存在, 跳过下载.${Font}"
+if [ -z "${PLATFORM}" ]; then
+    echo -e "${Red}无法识别当前架构: $(uname -m), 目前仅支持 x86_64 / aarch64 / armv7${Font}"
+    exit 1
 fi
 
-tar -zxvf ${FILE_NAME}.tar.gz
+FILE_NAME=frp_${FRP_VERSION}_linux_${PLATFORM}
+TAG="v${FRP_VERSION}"
+ASSET="${FILE_NAME}.tar.gz"
+TARBALL="${WORK_PATH}/${ASSET}"
+
+# 私有仓库匿名下载会拿到 404 的 JSON/HTML，必须校验是真正的 tar.gz
+verify_tarball() {
+	tar -tzf "$1" >/dev/null 2>&1
+}
+
+# 能直连 GitHub 就直连，否则先走代理再回退官方地址
+candidate_urls() {
+	local repo="$1"
+	local url="https://github.com/${repo}/releases/download/${TAG}/${ASSET}"
+	if [ "$GOOGLE_HTTP_CODE" == "200" ] || [ "$PROXY_HTTP_CODE" != "200" ]; then
+		echo "$url"
+	else
+		echo "${PROXY_URL}${url}"
+		echo "$url"
+	fi
+}
+
+# 公开下载（仓库未私有，或 FRP_RELEASE_REPO 指向自己的镜像仓库时可用）
+download_public() {
+	local repo="$1" url
+	for url in $(candidate_urls "$repo"); do
+		rm -f "${TARBALL}"
+		if curl -fsSL --connect-timeout 20 --retry 3 "$url" -o "${TARBALL}" && verify_tarball "${TARBALL}"; then
+			echo -e "${Green}下载成功: ${url}${Font}"
+			return 0
+		fi
+	done
+	rm -f "${TARBALL}"
+	return 1
+}
+
+# 私有仓库下载：GitHub API 资产接口（Bearer）优先，回退带令牌的浏览器下载地址
+download_private() {
+	local repo="$1" asset_id
+
+	echo -e "${Green}检测到 FRP_PAT, 尝试从私有仓库 ${repo} 下载 ${TAG} ...${Font}"
+
+	asset_id=$(curl -fsSL --connect-timeout 20 --retry 3 \
+		-H "Authorization: Bearer ${FRP_PAT}" \
+		-H "Accept: application/vnd.github+json" \
+		"https://api.github.com/repos/${repo}/releases/tags/${TAG}" |
+		sed 's/": */":/g' | tr ',{' '\n\n' |
+		awk -v n="\"name\":\"${ASSET}\"" '
+			{
+				line = $0
+				sub(/^[ \t]+/, "", line)
+				sub(/[[:space:]]*$/, "", line)
+				split(line, kv, ":")
+				if (kv[1] == "\"id\"") { id = kv[2] }
+				if (line == n) { print id; exit }
+			}')
+
+	if [ -n "$asset_id" ]; then
+		rm -f "${TARBALL}"
+		if curl -fsSL --connect-timeout 20 --retry 3 \
+			-H "Authorization: Bearer ${FRP_PAT}" \
+			-H "Accept: application/octet-stream" \
+			"https://api.github.com/repos/${repo}/releases/assets/${asset_id}" \
+			-o "${TARBALL}" && verify_tarball "${TARBALL}"; then
+			echo -e "${Green}下载成功: ${repo} ${TAG} (asset ${asset_id})${Font}"
+			return 0
+		fi
+	fi
+
+	rm -f "${TARBALL}"
+	if curl -fsSL --connect-timeout 20 --retry 3 \
+		-u "x-access-token:${FRP_PAT}" \
+		"https://github.com/${repo}/releases/download/${TAG}/${ASSET}" \
+		-o "${TARBALL}" && verify_tarball "${TARBALL}"; then
+		echo -e "${Green}下载成功: ${repo} ${TAG}${Font}"
+		return 0
+	fi
+
+	rm -f "${TARBALL}"
+	return 1
+}
+
+# 下载 frps.toml
+download_toml() {
+	local url="https://raw.githubusercontent.com/${REPO}/master/${FRP_NAME}.toml"
+	local urls
+	if [ "$GOOGLE_HTTP_CODE" == "200" ] || [ "$PROXY_HTTP_CODE" != "200" ]; then
+		urls="$url"
+	else
+		urls="${PROXY_URL}${url} ${url}"
+	fi
+	for url in $urls; do
+		rm -f "${WORK_PATH}/${FRP_NAME}.toml"
+		if curl -fsSL --connect-timeout 20 --retry 3 "$url" -o "${WORK_PATH}/${FRP_NAME}.toml" &&
+			[ -s "${WORK_PATH}/${FRP_NAME}.toml" ]; then
+			return 0
+		fi
+	done
+	rm -f "${WORK_PATH}/${FRP_NAME}.toml"
+	return 1
+}
+
+if [ -f "${TARBALL}" ] && verify_tarball "${TARBALL}"; then
+	echo -e "${Green}文件 ${ASSET} 已存在, 跳过下载.${Font}"
+else
+	DOWNLOAD_OK=0
+
+	if [ -n "${FRP_PAT}" ]; then
+		download_private "${FRP_RELEASE_REPO}" && DOWNLOAD_OK=1
+	fi
+
+	if [ "${DOWNLOAD_OK}" -ne 1 ]; then
+		echo -e "${Yellow}尝试公开下载 ${FRP_RELEASE_REPO} ${TAG} ...${Font}"
+		download_public "${FRP_RELEASE_REPO}" && DOWNLOAD_OK=1
+	fi
+
+	if [ "${DOWNLOAD_OK}" -ne 1 ]; then
+		echo -e "${Red}下载 frp ${TAG} 失败!${Font}"
+		echo -e "${Yellow}${FRP_RELEASE_REPO} 已设为私有仓库, 匿名下载会 404.${Font}"
+		echo -e "${Yellow}请先执行 export FRP_PAT='github_pat_xxx'(需有该仓库读权限) 后重试,${Font}"
+		echo -e "${Yellow}或用 FRP_RELEASE_REPO=owner/repo 指定自己的公开镜像仓库.${Font}"
+		exit 1
+	fi
+fi
+
+if [ -f "${WORK_PATH}/${FRP_NAME}.toml" ]; then
+	echo -e "${Green}文件 ${FRP_NAME}.toml 已存在, 跳过下载.${Font}"
+elif ! download_toml; then
+	echo -e "${Red}下载 ${FRP_NAME}.toml 失败, 请检查网络或 REPO 设置!${Font}"
+	exit 1
+fi
+
+tar -zxvf "${TARBALL}"
 mkdir -p ${FRP_PATH}
-mv ${FILE_NAME}/${FRP_NAME} ${FRP_PATH}
-mv ${FRP_NAME}.toml ${FRP_PATH}
+mv "${WORK_PATH}/${FILE_NAME}/${FRP_NAME}" ${FRP_PATH}
+mv "${WORK_PATH}/${FRP_NAME}.toml" ${FRP_PATH}
 
 # 配置 frps.service
 cat >/lib/systemd/system/frps.service <<'EOF'

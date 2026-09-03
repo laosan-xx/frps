@@ -47,7 +47,34 @@ wget https://ghfast.top/https://raw.githubusercontent.com/stilleshan/frps/master
 
 #### 修改 frps_linux_install.sh 脚本
 `FRP_VERSION=0.80.7` 可根据原版项目更新自行修改为最新版本.  
-`REPO=stilleshan/frps` 由于 **fork** 到你自己的仓库,需修改`stilleshan`为你的 GitHub 账号ID.
+`REPO=laosan-xx/frps` 由于 **fork** 到你自己的仓库,需修改`laosan-xx`为你的 GitHub 账号ID.  
+
+### frp 发布仓库已私有(必读)
+本脚本/Dockerfile 默认从 `laosan-xx/frp` 的 releases 下载二进制,该仓库**已设为私有**,匿名下载会返回 404.  
+三种处理方式,任选其一:
+
+1. **使用 PAT 拉取私有仓库(与 OpenWRT-CI 的 `FRP_PAT` 同款令牌)**  
+   PAT 需要有 `laosan-xx/frp` 的读取权限.
+   ```shell
+   export FRP_PAT='github_pat_xxx'
+   ./frps_linux_install.sh
+   ```
+   脚本会走 GitHub API 的 release assets 接口(Bearer 鉴权)下载,失败再回退带令牌的浏览器下载地址.
+
+2. **改用公开镜像仓库**(把对应版本的 `frp_<ver>_linux_<arch>.tar.gz` 放到自己的公开仓库 releases 里)
+   ```shell
+   FRP_RELEASE_REPO=你的账号/你的仓库 FRP_VERSION=0.80.7 ./frps_linux_install.sh
+   ```
+
+3. **手动放包**:把 `frp_0.80.7_linux_amd64.tar.gz` 放到脚本同目录,脚本检测到有效压缩包会自动跳过下载.
+
+未设置 `FRP_PAT` 时脚本会先尝试匿名公开下载(仓库恢复公开或已换镜像仓库时直接可用),全部失败会给出明确报错并退出,不会拿 404 页面当安装包继续跑.
+
+> Dockerfile 构建同理:
+> ```shell
+> docker build --build-arg FRP_PAT=$FRP_PAT --build-arg VERSION=0.80.7 -t frps .
+> ```
+> 注意: `--build-arg` 会留在镜像历史中,建议本地构建,或用 `--build-arg FRP_RELEASE_REPO=你的账号/你的仓库` 指向自己的公开镜像仓库.
 
 #### 执行一键脚本
 修改以下脚本链接中的`stilleshan`为你的 GitHub 账号 ID 后,执行即可.

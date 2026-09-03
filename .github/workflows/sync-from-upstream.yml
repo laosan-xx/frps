@@ -12,6 +12,9 @@ permissions:
 jobs:
   sync:
     runs-on: ubuntu-latest
+    env:
+      # laosan-xx/frp 已私有：访问该仓库的步骤都需要带读取权限的 PAT
+      FRP_PAT: ${{ secrets.FRP_PAT }}
     outputs:
       updated: ${{ steps.update.outputs.updated }}
     steps:
@@ -24,7 +27,17 @@ jobs:
       - name: Get latest release tag from laosan-xx/frp
         id: upstream
         run: |
-          TAG=$(curl -sS "https://api.github.com/repos/laosan-xx/frp/releases/latest" | jq -r '.tag_name')
+          # laosan-xx/frp 已设为私有仓库：匿名 API 会 404，必须用 FRP_PAT 鉴权
+          if [ -z "$FRP_PAT" ]; then
+            echo "ERROR: FRP_PAT is empty, cannot read private repo laosan-xx/frp!"
+            echo "请在仓库 Settings → Secrets and variables → Actions 中添加 FRP_PAT（需有 laosan-xx/frp 读取权限）"
+            exit 1
+          fi
+
+          TAG=$(curl -fsSL \
+            -H "Authorization: Bearer $FRP_PAT" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/laosan-xx/frp/releases/latest" | jq -r '.tag_name')
 
           if [ -z "$TAG" ] || [ "$TAG" = "null" ]; then
             echo "Failed to get upstream release tag"
@@ -41,10 +54,11 @@ jobs:
         id: update
         run: |
           NEW_VERSION="${{ steps.upstream.outputs.PKG_VERSION }}"
-          CURRENT_VERSION=$(sed -n 's/^ENV VERSION //p' Dockerfile)
+          # Dockerfile 现在是 ARG VERSION=0.80.7，ENV VERSION ${VERSION} 只是把 ARG 透传给容器
+          CURRENT_VERSION=$(sed -n 's/^ARG VERSION=//p' Dockerfile | head -n 1)
 
           if [ -z "$CURRENT_VERSION" ]; then
-            echo "Cannot find version in Dockerfile (pattern: ^ENV VERSION)"
+            echo "Cannot find version in Dockerfile (pattern: ^ARG VERSION=)"
             exit 1
           fi
 
@@ -52,11 +66,11 @@ jobs:
             echo "updated=false" >> "$GITHUB_OUTPUT"
             echo "Already up to date (v${CURRENT_VERSION})"
           else
-            # Dockerfile: ENV VERSION 0.70.21
-            sed -i "s/^ENV VERSION .*/ENV VERSION ${NEW_VERSION}/" Dockerfile
-            # 安装脚本: FRP_VERSION=0.70.21
-            sed -i "s/^FRP_VERSION=.*/FRP_VERSION=${NEW_VERSION}/" frps_linux_install.sh
-            # 卸载脚本: FRP_VERSION=0.70.21
+            # Dockerfile: ARG VERSION=0.80.7
+            sed -i "s/^ARG VERSION=.*/ARG VERSION=${NEW_VERSION}/" Dockerfile
+            # 安装脚本: FRP_VERSION=${FRP_VERSION:-0.80.7}（保留默认值写法，允许环境变量覆盖）
+            sed -i 's|^FRP_VERSION=.*|FRP_VERSION=${FRP_VERSION:-'"${NEW_VERSION}"'}|' frps_linux_install.sh
+            # 卸载脚本: FRP_VERSION=0.80.7
             sed -i "s/^FRP_VERSION=.*/FRP_VERSION=${NEW_VERSION}/" frps_linux_uninstall.sh
             # README.md: `FRP_VERSION=0.70.21`
             sed -i "s/FRP_VERSION=[0-9.]*/FRP_VERSION=${NEW_VERSION}/g" README.md
